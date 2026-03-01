@@ -10,6 +10,7 @@ from shapely.geometry import LineString, Point, Polygon
 @dataclass
 class RegionDef:
     id: int
+    name: str
     kind: str          # "spot" or "zone"
     spot_type: str     # "handicap", "metered", "standard_zone", etc.
     capacity: int

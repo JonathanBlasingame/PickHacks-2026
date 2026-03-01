@@ -200,7 +200,7 @@ def fused_occupied(geometry_occupied: bool, classifier_busy_prob: Optional[float
 
 def load_regions_for_camera(camera_id: int) -> List[RegionDef]:
     rows = fetch_all(
-        "SELECT id, kind, spot_type, capacity, grid_cols, angle_override_deg, points_json FROM regions WHERE camera_id = ? AND enabled = 1",
+        "SELECT id, name, kind, spot_type, capacity, grid_cols, angle_override_deg, points_json FROM regions WHERE camera_id = ? AND enabled = 1",
         (camera_id,),
     )
     out: List[RegionDef] = []
@@ -209,6 +209,7 @@ def load_regions_for_camera(camera_id: int) -> List[RegionDef]:
         out.append(
             RegionDef(
                 id=r["id"],
+                name=str(r["name"]),
                 kind=r["kind"],
                 spot_type=r["spot_type"],
                 capacity=int(r["capacity"]),
@@ -224,6 +225,7 @@ def _region_signature(reg: RegionDef) -> Tuple[Any, ...]:
     points = tuple((round(float(x), 4), round(float(y), 4)) for (x, y) in reg.points)
     return (
         int(reg.id),
+        reg.name,
         reg.kind,
         reg.spot_type,
         int(reg.capacity),
@@ -536,6 +538,7 @@ def main(sample_every_n_frames: int = SAMPLE_EVERY_N_FRAMES, model_name: str = Y
                         region_debug.append(
                             {
                                 "region_id": reg.id,
+                                "name": reg.name,
                                 "kind": "spot",
                                 "spot_type": reg.spot_type,
                                 "points": [[float(x), float(y)] for (x, y) in reg.points],
@@ -605,6 +608,7 @@ def main(sample_every_n_frames: int = SAMPLE_EVERY_N_FRAMES, model_name: str = Y
                         region_debug.append(
                             {
                                 "region_id": reg.id,
+                                "name": reg.name,
                                 "kind": "zone",
                                 "spot_type": reg.spot_type,
                                 "points": [[float(x), float(y)] for (x, y) in reg.points],

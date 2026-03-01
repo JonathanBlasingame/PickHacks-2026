@@ -264,11 +264,21 @@ function drawOverlay(debug) {
     if (reg.kind === 'spot') {
       const color = reg.occupied ? '#ff4d4f' : '#52c41a';
       drawPolygon(reg.points, color, 2);
+      if (Array.isArray(reg.points) && reg.points.length > 0) {
+        const [x, y] = reg.points[0];
+        const label = reg.name ? reg.name : `#${reg.region_id}`;
+        drawSpotLabel(x + 10, y - 10, label, '#e5e7eb');
+      }
       continue;
     }
 
     if (reg.kind === 'zone') {
       drawZoneGrid(reg);
+      if (Array.isArray(reg.points) && reg.points.length > 0) {
+        const [x, y] = reg.points[0];
+        const label = reg.name ? reg.name : `#${reg.region_id}`;
+        drawSpotLabel(x + 10, y - 10, label, '#e5e7eb');
+      }
     }
   }
 }
@@ -279,9 +289,11 @@ function renderRegionCards(debug) {
     const div = document.createElement('div');
     div.className = 'region';
     if (reg.kind === 'spot') {
-      div.innerHTML = `<b>#${reg.region_id} Spot</b><br/>Type: ${reg.spot_type}<br/>Occupied: <b>${reg.occupied ? 'yes' : 'no'}</b>`;
+      const title = reg.name ? reg.name : `#${reg.region_id} Spot`;
+      div.innerHTML = `<b>${title}</b><br/><span class="muted">ID: #${reg.region_id}</span><br/>Type: ${reg.spot_type}<br/>Occupied: <b>${reg.occupied ? 'yes' : 'no'}</b>`;
     } else {
-      div.innerHTML = `<b>#${reg.region_id} Zone</b><br/>Type: ${reg.spot_type}<br/>Occupied/Open: <b>${reg.occupied_count}/${reg.open_spots}</b>`;
+      const title = reg.name ? reg.name : `#${reg.region_id} Zone`;
+      div.innerHTML = `<b>${title}</b><br/><span class="muted">ID: #${reg.region_id}</span><br/>Type: ${reg.spot_type}<br/>Occupied/Open: <b>${reg.occupied_count}/${reg.open_spots}</b>`;
     }
     regionsDiv.appendChild(div);
   }
