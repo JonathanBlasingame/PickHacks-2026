@@ -1,0 +1,618 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Smart Parking Dashboard</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #f2f5f9; color: #17243d; }
+    header {
+      padding: 14px 18px;
+      border-bottom: 1px solid #d9e1ef;
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap: 12px;
+      background: linear-gradient(90deg, #0f3f87, #1e63bd);
+      color: #fff;
+      box-shadow: 0 3px 12px rgba(4, 31, 74, 0.2);
+    }
+    header a { color: #dbe8ff; text-decoration: none; }
+    header a:hover { text-decoration: underline; }
+    #wrap { display:flex; height: calc(100vh - 56px); }
+    #map { flex: 1; }
+    #panel {
+      width: 390px;
+      border-left: 1px solid #d9e1ef;
+      padding: 14px;
+      overflow:auto;
+      background: #f7faff;
+      box-shadow: inset 1px 0 0 rgba(255,255,255,0.8);
+    }
+    .panel-card {
+      background: #fff;
+      border: 1px solid #dbe3f2;
+      border-radius: 14px;
+      box-shadow: 0 4px 10px rgba(17, 52, 104, 0.08);
+      padding: 12px;
+      margin-bottom: 14px;
+    }
+    h3 { margin: 2px 0 10px; }
+    .row { display:flex; gap: 8px; align-items:center; }
+    label { display:block; font-weight:600; margin-top: 10px; }
+    input, button { padding: 9px 10px; width: 100%; margin-top: 6px; box-sizing: border-box; border-radius: 8px; border: 1px solid #c7d4e8; }
+    button { background: #1558b0; color: #fff; border: 1px solid #0f468d; font-weight: 600; cursor: pointer; }
+    button:hover { background: #0f4a97; }
+    .lot { border: 1px solid #dbe3f2; padding: 10px; margin-top: 10px; border-radius: 10px; cursor: pointer; background: #fff; }
+    .lot-group summary { list-style: none; }
+    .lot-group summary::-webkit-details-marker { display: none; }
+    .lot-item { border: 1px solid #eee; padding: 8px; margin-top: 8px; border-radius: 8px; cursor: pointer; background: #fafafa; }
+    .muted { color:#666; font-size: 12px; }
+    .badge { display:inline-block; padding: 2px 8px; border-radius: 999px; border: 1px solid #c5d3e8; font-size: 12px; background: #edf3ff; }
+    .open-spots-overlay {
+      background: rgba(255, 255, 255, 0.95);
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 8px 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+      font-size: 12px;
+      line-height: 1.2;
+    }
+    .open-spots-overlay .total { font-size: 20px; font-weight: 700; margin-top: 2px; }
+    .open-spots-marker {
+      width: 42px;
+      height: 42px;
+      border-radius: 999px;
+      border: 2px solid #fff;
+      color: #fff;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      font-size: 15px;
+    }
+    .open-spots-marker.green { background: #2e7d32; }
+    .open-spots-marker.yellow { background: #f9a825; }
+    .open-spots-marker.red { background: #c62828; }
+    .open-spots-cluster {
+      width: 50px;
+      height: 50px;
+      border-radius: 999px;
+      border: 2px solid #fff;
+      color: #fff;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      font-size: 17px;
+    }
+    .open-spots-cluster.green { background: #2e7d32; }
+    .open-spots-cluster.yellow { background: #f9a825; }
+    .open-spots-cluster.red { background: #c62828; }
+    .type-dropdown { position: relative; margin-top: 6px; }
+    .dropdown-toggle {
+      background: #fff;
+      color: #17243d;
+      border: 1px solid #c7d4e8;
+      text-align: left;
+      font-weight: 500;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .dropdown-toggle .chevron { margin-left: 8px; color: #5b6d8d; }
+    .dropdown-menu {
+      display: none;
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      right: 0;
+      z-index: 900;
+      background: #fff;
+      border: 1px solid #c7d4e8;
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(16, 46, 92, 0.14);
+      padding: 6px 10px 10px;
+    }
+    .dropdown-menu.open { display: block; }
+    .type-option { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-weight: 500; }
+    .type-option input { width: auto; margin: 0; }
+    .dropdown-actions { display: flex; justify-content: space-between; margin-top: 10px; gap: 8px; }
+    .dropdown-actions button { margin-top: 0; padding: 6px 10px; background: #eef4ff; color: #173f81; border: 1px solid #c7d4e8; }
+    .dropdown-actions button:hover { background: #dce8ff; }
+  </style>
+</head>
+<body>
+<header>
+  <div>
+    <b>Smart Parking</b>
+    <span class="muted">(recorded-video + virtual spots)</span>
+  </div>
+  <div class="row">
+    <a href="/static/admin.html">Regions</a> | <a href="/static/map_admin.html">Map Setup</a> | <a href="/static/debug.html">CV Debug</a>
+    <button id="refreshBtn" style="width:auto;">Refresh</button>
+  </div>
+</header>
+
+<div id="wrap">
+  <div id="map"></div>
+  <div id="panel">
+    <div class="panel-card">
+      <h3>Filters</h3>
+
+      <label>Minimum open spots</label>
+      <input id="minOpen" type="number" min="0" value="0"/>
+
+      <label>Spot types</label>
+      <div class="type-dropdown">
+        <button id="typeDropdownBtn" class="dropdown-toggle" type="button">
+          <span id="typeDropdownLabel">All spot types selected</span>
+          <span class="chevron">▾</span>
+        </button>
+        <div id="typeDropdownMenu" class="dropdown-menu"></div>
+      </div>
+
+      <button id="applyBtn">Apply filters</button>
+    </div>
+
+    <div class="panel-card">
+      <h3>Lots</h3>
+      <div id="lots"></div>
+    </div>
+
+    <div class="panel-card">
+      <h3>Zone overlay (optional)</h3>
+      <div class="muted">
+        This MVP returns per-zone “virtual spots” from the CV worker via <code>/api/zones/&lt;id&gt;/virtual</code>.
+        A full image overlay is a stretch goal; counts above are the main demo.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script>
+const map = L.map('map').setView([37.9514, -91.7713], 13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; OpenStreetMap'
+}).addTo(map);
+
+const markerCluster = L.markerClusterGroup({
+  maxClusterRadius: 42,
+  showCoverageOnHover: false,
+  spiderfyOnMaxZoom: false,
+  iconCreateFunction: function(cluster) {
+    const totals = cluster.getAllChildMarkers().reduce((acc, marker) => {
+      acc.open += marker.options.openCount || 0;
+      acc.total += marker.options.totalCount || 0;
+      return acc;
+    }, { open: 0, total: 0 });
+    const colorClass = getOccupancyColorClass(totals.open, totals.total);
+    return L.divIcon({
+      className: '',
+      html: `<div class="open-spots-cluster ${colorClass}" title="Open: ${totals.open}/${totals.total}">${totals.open}</div>`,
+      iconSize: [50, 50],
+      iconAnchor: [25, 25],
+    });
+  },
+});
+map.addLayer(markerCluster);
+let lotPolys = [];
+let cameraMarkers = [];
+let lastAvailability = null;
+
+const FILTER_DEFAULTS = {
+  minOpen: "0",
+  types: "standard,handicap,metered,standard_zone,EV,reserved",
+};
+const ALL_TYPES = FILTER_DEFAULTS.types.split(',');
+
+const GROUP_COLLAPSE_ZOOM = 16;
+
+const OpenSpotsOverlay = L.Control.extend({
+  options: { position: 'topleft' },
+  onAdd: function () {
+    this._div = L.DomUtil.create('div', 'open-spots-overlay');
+    this._div.innerHTML = '<div class="muted">Open spots</div><div class="total">0</div><div class="muted">all lots</div>';
+    return this._div;
+  },
+  setCounts: function (open, total, filtered) {
+    if (!this._div) return;
+    const scope = filtered ? 'filtered results' : 'all lots';
+    this._div.innerHTML = `<div class="muted">Open spots</div><div class="total">${open}/${total}</div><div class="muted">${scope}</div>`;
+  }
+});
+const openSpotsOverlay = new OpenSpotsOverlay();
+map.addControl(openSpotsOverlay);
+
+function clearLotPolys() {
+  for (const p of lotPolys) map.removeLayer(p);
+  lotPolys = [];
+}
+function clearCameraMarkers() {
+  for (const m of cameraMarkers) map.removeLayer(m);
+  cameraMarkers = [];
+}
+
+async function loadCamerasOnMap() {
+  clearCameraMarkers();
+  const res = await fetch("/api/cameras");
+  const cams = await res.json();
+  for (const c of cams) {
+    if (c.lat == null || c.lon == null) continue;
+    const m = L.circleMarker([c.lat, c.lon], { radius: 6 }).addTo(map);
+    m.bindPopup(`<b>${c.name}</b><br/>Lot ID: ${c.lot_id}`);
+    cameraMarkers.push(m);
+  }
+}
+
+function clearMarkers() {
+  clearLotPolys();
+  markerCluster.clearLayers();
+}
+
+function getFilterParams() {
+  const minOpen = document.getElementById("minOpen").value || "0";
+  const types = getSelectedTypes().join(',');
+  const params = new URLSearchParams();
+  params.set("min_open", minOpen);
+  params.set("ignore_metered", "false");
+  params.set("ignore_handicap", "false");
+  params.set("include_types", types);
+  return params.toString();
+}
+
+function isFilterActive() {
+  const minOpen = document.getElementById("minOpen").value || "0";
+  const selected = getSelectedTypes();
+  return (
+    minOpen !== FILTER_DEFAULTS.minOpen ||
+    selected.length !== ALL_TYPES.length ||
+    selected.some((type) => !ALL_TYPES.includes(type))
+  );
+}
+
+function formatTypeLabel(type) {
+  return type === 'EV' ? 'EV' : type.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function getSelectedTypes() {
+  return Array.from(document.querySelectorAll('.type-option input:checked')).map((input) => input.value);
+}
+
+function updateTypeDropdownLabel() {
+  const selected = getSelectedTypes();
+  const label = document.getElementById('typeDropdownLabel');
+  if (selected.length === ALL_TYPES.length) {
+    label.textContent = 'All spot types selected';
+    return;
+  }
+  if (selected.length === 0) {
+    label.textContent = 'No spot types selected';
+    return;
+  }
+  label.textContent = `${selected.length} spot type${selected.length === 1 ? '' : 's'} selected`;
+}
+
+function initializeTypeDropdown() {
+  const menu = document.getElementById('typeDropdownMenu');
+  menu.innerHTML = '';
+  ALL_TYPES.forEach((type) => {
+    const option = document.createElement('label');
+    option.className = 'type-option';
+    option.innerHTML = `<input type="checkbox" value="${type}" checked><span>${formatTypeLabel(type)}</span>`;
+    const checkbox = option.querySelector('input');
+    checkbox.addEventListener('change', updateTypeDropdownLabel);
+    menu.appendChild(option);
+  });
+
+  const actions = document.createElement('div');
+  actions.className = 'dropdown-actions';
+  actions.innerHTML = '<button id="selectAllTypes" type="button">Select all</button><button id="clearTypes" type="button">Clear all</button>';
+  menu.appendChild(actions);
+
+  document.getElementById('selectAllTypes').addEventListener('click', () => {
+    menu.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => { checkbox.checked = true; });
+    updateTypeDropdownLabel();
+  });
+  document.getElementById('clearTypes').addEventListener('click', () => {
+    menu.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => { checkbox.checked = false; });
+    updateTypeDropdownLabel();
+  });
+
+  const dropdownBtn = document.getElementById('typeDropdownBtn');
+  dropdownBtn.addEventListener('click', (evt) => {
+    evt.stopPropagation();
+    menu.classList.toggle('open');
+  });
+
+  document.addEventListener('click', (evt) => {
+    if (!menu.contains(evt.target) && !dropdownBtn.contains(evt.target)) {
+      menu.classList.remove('open');
+    }
+  });
+
+  menu.addEventListener('click', (evt) => evt.stopPropagation());
+  updateTypeDropdownLabel();
+}
+
+function toFiniteNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function pickValidLatLon(entity) {
+  const directLat = toFiniteNumber(entity?.lat);
+  const directLon = toFiniteNumber(entity?.lon);
+  if (directLat != null && directLon != null) {
+    return [directLat, directLon];
+  }
+
+  for (const seg of (entity?.segments || [])) {
+    const segLat = toFiniteNumber(seg?.lat);
+    const segLon = toFiniteNumber(seg?.lon);
+    if (segLat != null && segLon != null) {
+      return [segLat, segLon];
+    }
+  }
+  return null;
+}
+
+function computeBoundsFromGeojsonList(polygonGeojsons) {
+  const bounds = L.latLngBounds([]);
+  for (const polygon_geojson of (polygonGeojsons || [])) {
+    if (!polygon_geojson) continue;
+    try {
+      const gj = JSON.parse(polygon_geojson);
+      const layer = L.geoJSON(gj);
+      const b = layer.getBounds();
+      if (b && b.isValid()) bounds.extend(b);
+    } catch (e) {
+      console.warn('Invalid polygon_geojson bounds parse', e);
+    }
+  }
+  return bounds;
+}
+
+function getAreaCenter(groupOrLot) {
+  const bounds = computeBoundsFromGeojsonList(groupOrLot.polygon_geojsons || [groupOrLot.polygon_geojson]);
+  if (bounds.isValid()) return bounds.getCenter();
+
+  const coords = pickValidLatLon(groupOrLot);
+  if (coords) return L.latLng(coords[0], coords[1]);
+  return map.getCenter();
+}
+
+function zoomToArea(groupOrLot) {
+  const bounds = computeBoundsFromGeojsonList(groupOrLot.polygon_geojsons || [groupOrLot.polygon_geojson]);
+  if (bounds.isValid()) {
+    map.fitBounds(bounds.pad(0.2));
+    return;
+  }
+
+  const coords = pickValidLatLon(groupOrLot);
+  if (coords) {
+    map.setView(coords, 17);
+    return;
+  }
+  map.setView(map.getCenter(), map.getZoom());
+}
+
+function getOccupancyColorClass(open, total) {
+  if (!total) return 'green';
+  const fullRatio = (total - open) / total;
+  if (fullRatio >= 0.75) return 'red';
+  if (fullRatio >= 0.5) return 'yellow';
+  return 'green';
+}
+
+function buildOpenSpotsIcon(open, total) {
+  const colorClass = getOccupancyColorClass(open, total);
+  return L.divIcon({
+    className: '',
+    html: `<div class="open-spots-marker ${colorClass}" title="Open: ${open}/${total}">${open}</div>`,
+    iconSize: [42, 42],
+    iconAnchor: [21, 21],
+  });
+}
+
+function toDisplayGroups(lots) {
+  const isZoomedOut = map.getZoom() < GROUP_COLLAPSE_ZOOM;
+  if (!isZoomedOut) {
+    return lots.map(lot => ({
+      key: `lot-${lot.lot_id}`,
+      label: lot.lot_name,
+      lat: lot.lat,
+      lon: lot.lon,
+      totals: lot.totals,
+      last_updated: lot.last_updated,
+      polygon_geojsons: [lot.polygon_geojson],
+      segments: [lot],
+    }));
+  }
+
+  const groups = new Map();
+  for (const lot of lots) {
+    const groupName = (lot.lot_group || '').trim();
+    const key = groupName || `lot-${lot.lot_id}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        label: groupName || lot.lot_name,
+        lat_sum: 0,
+        lon_sum: 0,
+        count: 0,
+        totals: { spots_open: 0, spots_total: 0 },
+        last_updated: '',
+        polygon_geojsons: [],
+        segments: [],
+      });
+    }
+    const g = groups.get(key);
+    const lotLat = toFiniteNumber(lot.lat);
+    const lotLon = toFiniteNumber(lot.lon);
+    if (lotLat != null && lotLon != null) {
+      g.lat_sum += lotLat;
+      g.lon_sum += lotLon;
+      g.count += 1;
+    }
+    g.totals.spots_open += lot.totals.spots_open;
+    g.totals.spots_total += lot.totals.spots_total;
+    if (!g.last_updated || (lot.last_updated && lot.last_updated > g.last_updated)) {
+      g.last_updated = lot.last_updated;
+    }
+    if (lot.polygon_geojson) g.polygon_geojsons.push(lot.polygon_geojson);
+    g.segments.push(lot);
+  }
+
+  return Array.from(groups.values()).map(g => {
+    const fallback = g.segments[0] || {};
+    const hasAvg = g.count > 0;
+    return ({
+    key: g.key,
+    label: g.label,
+    lat: hasAvg ? (g.lat_sum / g.count) : fallback.lat,
+    lon: hasAvg ? (g.lon_sum / g.count) : fallback.lon,
+    totals: g.totals,
+    last_updated: g.last_updated,
+    polygon_geojsons: g.polygon_geojsons,
+    segments: g.segments,
+  });
+  });
+}
+
+function renderAvailability(data) {
+  clearMarkers();
+  const lotsDiv = document.getElementById("lots");
+  lotsDiv.innerHTML = "";
+
+  const displayGroups = toDisplayGroups(data.lots || []);
+  const groupMap = new Map();
+  for (const lot of (data.lots || [])) {
+    const groupName = (lot.lot_group || '').trim() || lot.lot_name;
+    if (!groupMap.has(groupName)) {
+      groupMap.set(groupName, {
+        key: groupName,
+        label: groupName,
+        lots: [],
+        polygon_geojsons: [],
+        lat_sum: 0,
+        lon_sum: 0,
+        count: 0,
+        totals: { spots_open: 0, spots_total: 0 },
+        last_updated: '',
+      });
+    }
+    const g = groupMap.get(groupName);
+    g.lots.push(lot);
+    const lotLat = toFiniteNumber(lot.lat);
+    const lotLon = toFiniteNumber(lot.lon);
+    if (lotLat != null && lotLon != null) {
+      g.lat_sum += lotLat;
+      g.lon_sum += lotLon;
+      g.count += 1;
+    }
+    g.totals.spots_open += lot.totals.spots_open;
+    g.totals.spots_total += lot.totals.spots_total;
+    if (lot.polygon_geojson) g.polygon_geojsons.push(lot.polygon_geojson);
+    if (!g.last_updated || (lot.last_updated && lot.last_updated > g.last_updated)) g.last_updated = lot.last_updated;
+  }
+
+  const totals = (data.lots || []).reduce((acc, lot) => {
+    acc.open += lot.totals.spots_open;
+    acc.total += lot.totals.spots_total;
+    return acc;
+  }, { open: 0, total: 0 });
+  openSpotsOverlay.setCounts(totals.open, totals.total, isFilterActive());
+
+  for (const group of displayGroups) {
+    for (const polygon_geojson of group.polygon_geojsons) {
+      try {
+        const gj = JSON.parse(polygon_geojson);
+        const layer = L.geoJSON(gj, { style: { weight: 2 } }).addTo(map);
+        lotPolys.push(layer);
+      } catch (e) {
+        console.warn('Invalid polygon_geojson for group', group.key, e);
+      }
+    }
+
+    const open = group.totals.spots_open;
+    const total = group.totals.spots_total;
+
+    const markerCenter = getAreaCenter(group);
+    const marker = L.marker([markerCenter.lat, markerCenter.lng], {
+      icon: buildOpenSpotsIcon(open, total),
+      openCount: open,
+      totalCount: total,
+    });
+    markerCluster.addLayer(marker);
+    marker.bindPopup(`<b>${group.label}</b><br/>Open: ${open}/${total}<br/><span class="muted">Updated: ${group.last_updated || 'n/a'}</span>`);
+    // Map markers still render grouped/ungrouped by zoom level.
+  }
+
+  for (const g of groupMap.values()) {
+    const details = document.createElement('details');
+    details.className = 'lot lot-group';
+    const avgLat = g.count > 0 ? (g.lat_sum / g.count) : null;
+    const avgLon = g.count > 0 ? (g.lon_sum / g.count) : null;
+    details.innerHTML = `
+      <summary>
+        <div class="row" style="justify-content:space-between;">
+          <div><b>${g.label}</b></div>
+          <div class="badge">Open: ${g.totals.spots_open}/${g.totals.spots_total}</div>
+        </div>
+        <div class="muted">${g.lots.length} lot${g.lots.length === 1 ? '' : 's'} • Updated: ${g.last_updated || 'n/a'}</div>
+      </summary>
+    `;
+    details.querySelector('summary').addEventListener('click', (evt) => {
+      evt.preventDefault();
+      details.open = !details.open;
+      zoomToArea({ lat: avgLat, lon: avgLon, polygon_geojsons: g.polygon_geojsons, segments: g.lots });
+    });
+
+    for (const lot of g.lots) {
+      const lotItem = document.createElement('div');
+      lotItem.className = 'lot-item';
+      lotItem.innerHTML = `
+        <div class="row" style="justify-content:space-between;">
+          <div>${lot.lot_name}</div>
+          <div class="badge">${lot.totals.spots_open}/${lot.totals.spots_total}</div>
+        </div>
+      `;
+      lotItem.addEventListener('click', (evt) => {
+        evt.stopPropagation();
+        zoomToArea(lot);
+      });
+      details.appendChild(lotItem);
+    }
+    lotsDiv.appendChild(details);
+  }
+}
+
+async function loadAvailability() {
+  const qs = getFilterParams();
+  const res = await fetch(`/api/availability?${qs}`);
+  lastAvailability = await res.json();
+  renderAvailability(lastAvailability);
+}
+
+document.getElementById("applyBtn").addEventListener("click", async () => { await loadAvailability(); await loadCamerasOnMap(); });
+document.getElementById("refreshBtn").addEventListener("click", async () => { await loadAvailability(); await loadCamerasOnMap(); });
+
+map.on('zoomend', () => {
+  if (lastAvailability) {
+    renderAvailability(lastAvailability);
+  }
+});
+
+initializeTypeDropdown();
+loadAvailability();
+</script>
+</body>
+</html>

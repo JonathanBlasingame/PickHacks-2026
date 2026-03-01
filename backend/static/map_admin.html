@@ -1,0 +1,339 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Map Setup - Lots & Cameras</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:0; }
+    header { padding: 12px 16px; border-bottom: 1px solid #ddd; display:flex; justify-content:space-between; align-items:center; }
+    #wrap { display:flex; height: calc(100vh - 56px); }
+    #map { flex: 1; }
+    #panel { width: 380px; border-left: 1px solid #ddd; padding: 12px; overflow:auto; }
+    label { display:block; font-weight:600; margin-top: 10px; }
+    select, input, button, textarea { width:100%; padding:8px; margin-top:6px; }
+    textarea { height: 120px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .muted { color:#666; font-size: 12px; line-height: 1.35; }
+    .row { display:flex; gap: 8px; }
+    .row > * { flex:1; }
+  </style>
+</head>
+<body>
+<header>
+  <div><b>Map Setup</b> <span class="muted">Draw lot boundaries and place camera markers</span></div>
+  <div><a href="/static/dashboard.html">Dashboard</a> | <a href="/static/admin.html">Regions</a></div>
+</header>
+<div id="wrap">
+  <div id="map"></div>
+  <div id="panel">
+    <h3>Lot</h3>
+    <label>Select lot</label>
+    <select id="lotSelect"></select>
+
+    <label>Lot name</label>
+    <input id="lotName" type="text" placeholder="Lot L - East" />
+
+    <label>Lot group (optional)</label>
+    <input id="lotGroup" type="text" placeholder="Lot L" />
+
+    <button id="saveLotMeta">Save lot name/group</button>
+
+    <details style="margin-top:10px;">
+      <summary><b>Create new lot</b></summary>
+      <label>New lot name</label>
+      <input id="newLotName" type="text" placeholder="Lot L - West" />
+      <label>New lot group (optional)</label>
+      <input id="newLotGroup" type="text" placeholder="Lot L" />
+      <div class="row">
+        <div>
+          <label>New lot lat</label>
+          <input id="newLotLat" type="number" step="0.000001" value="37.951400" />
+        </div>
+        <div>
+          <label>New lot lon</label>
+          <input id="newLotLon" type="number" step="0.000001" value="-91.771300" />
+        </div>
+      </div>
+      <button id="createLotBtn">Create lot</button>
+    </details>
+
+    <div class="row">
+      <div>
+        <label>Lot lat</label>
+        <input id="lotLat" type="number" step="0.000001" />
+      </div>
+      <div>
+        <label>Lot lon</label>
+        <input id="lotLon" type="number" step="0.000001" />
+      </div>
+    </div>
+
+    <button id="saveLotCenter">Save lot center</button>
+
+    <label>Lot polygon (GeoJSON)</label>
+    <textarea id="lotGeojson" placeholder='{"type":"Feature","geometry":{"type":"Polygon","coordinates":[...]}}'></textarea>
+    <div class="muted">Tip: Use the draw tool on the left of the map to draw/edit the lot polygon, then click “Save lot polygon”.</div>
+    <button id="saveLotPoly">Save lot polygon</button>
+
+    <hr/>
+
+    <h3>Camera</h3>
+    <label>Select camera</label>
+    <select id="camSelect"></select>
+    <div class="row">
+      <div>
+        <label>Camera lat</label>
+        <input id="camLat" type="number" step="0.000001" />
+      </div>
+      <div>
+        <label>Camera lon</label>
+        <input id="camLon" type="number" step="0.000001" />
+      </div>
+    </div>
+    <button id="saveCam">Save camera location</button>
+    <div class="muted">You can also drag the camera marker on the map.</div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<script>
+const map = L.map('map').setView([37.9514, -91.7713], 16);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap' }).addTo(map);
+
+const drawnItems = new L.FeatureGroup();
+map.addLayer(drawnItems);
+
+const drawControl = new L.Control.Draw({
+  draw: { polyline:false, rectangle:false, circle:false, circlemarker:false, marker:false },
+  edit: { featureGroup: drawnItems }
+});
+map.addControl(drawControl);
+
+let lots = [];
+let cameras = [];
+let lotLayer = null;
+let camMarker = null;
+
+function setLotLayer(geojson) {
+  if (lotLayer) {
+    map.removeLayer(lotLayer);
+    lotLayer = null;
+  }
+  if (!geojson) return;
+  lotLayer = L.geoJSON(geojson, { style: { weight: 2 } }).addTo(map);
+  // Also sync to drawnItems so user can edit
+  drawnItems.clearLayers();
+  lotLayer.eachLayer(l => drawnItems.addLayer(l));
+}
+
+function setCameraMarker(lat, lon) {
+  if (camMarker) {
+    map.removeLayer(camMarker);
+    camMarker = null;
+  }
+  if (lat == null || lon == null) return;
+  camMarker = L.marker([lat, lon], { draggable: true }).addTo(map);
+  camMarker.on('dragend', () => {
+    const p = camMarker.getLatLng();
+    document.getElementById("camLat").value = p.lat.toFixed(6);
+    document.getElementById("camLon").value = p.lng.toFixed(6);
+  });
+}
+
+async function refreshLists() {
+  lots = await (await fetch("/api/lots")).json();
+  cameras = await (await fetch("/api/cameras")).json();
+
+  const lotSel = document.getElementById("lotSelect");
+  lotSel.innerHTML = "";
+  for (const l of lots) {
+    const opt = document.createElement("option");
+    opt.value = l.id;
+    const groupTag = l.lot_group ? ` [${l.lot_group}]` : "";
+    opt.textContent = `${l.name}${groupTag} (#${l.id})`;
+    lotSel.appendChild(opt);
+  }
+
+  const camSel = document.getElementById("camSelect");
+  camSel.innerHTML = "";
+  for (const c of cameras) {
+    const opt = document.createElement("option");
+    opt.value = c.id;
+    opt.textContent = `${c.name} (lot ${c.lot_id}) (#${c.id})`;
+    camSel.appendChild(opt);
+  }
+
+  if (lots.length) {
+    lotSel.value = lots[0].id;
+    onLotChange();
+  }
+  if (cameras.length) {
+    camSel.value = cameras[0].id;
+    onCamChange();
+  }
+}
+
+function onLotChange() {
+  const id = parseInt(document.getElementById("lotSelect").value, 10);
+  const lot = lots.find(l => l.id === id);
+  if (!lot) return;
+
+  document.getElementById("lotName").value = lot.name || "";
+  document.getElementById("lotGroup").value = lot.lot_group || "";
+  document.getElementById("lotLat").value = lot.lat;
+  document.getElementById("lotLon").value = lot.lon;
+  document.getElementById("lotGeojson").value = lot.polygon_geojson || "";
+
+  map.setView([lot.lat, lot.lon], 18);
+
+  if (lot.polygon_geojson) {
+    try {
+      setLotLayer(JSON.parse(lot.polygon_geojson));
+    } catch(e) {
+      console.warn("bad geojson", e);
+      setLotLayer(null);
+    }
+  } else {
+    setLotLayer(null);
+    drawnItems.clearLayers();
+  }
+}
+
+function onCamChange() {
+  const id = parseInt(document.getElementById("camSelect").value, 10);
+  const cam = cameras.find(c => c.id === id);
+  if (!cam) return;
+
+  document.getElementById("camLat").value = cam.lat ?? "";
+  document.getElementById("camLon").value = cam.lon ?? "";
+  if (cam.lat != null && cam.lon != null) {
+    setCameraMarker(cam.lat, cam.lon);
+    map.setView([cam.lat, cam.lon], 19);
+  } else {
+    setCameraMarker(null, null);
+  }
+}
+
+document.getElementById("lotSelect").addEventListener("change", onLotChange);
+document.getElementById("camSelect").addEventListener("change", onCamChange);
+
+document.getElementById("saveLotMeta").addEventListener("click", async () => {
+  const lot_id = parseInt(document.getElementById("lotSelect").value, 10);
+  const name = document.getElementById("lotName").value.trim();
+  const lot_group_raw = document.getElementById("lotGroup").value.trim();
+  const lot_group = lot_group_raw;
+
+  await fetch(`/api/lots/${lot_id}`, {
+    method: "PUT",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({name, lot_group})
+  });
+
+  await refreshLists();
+  document.getElementById("lotSelect").value = String(lot_id);
+  onLotChange();
+});
+
+document.getElementById("createLotBtn").addEventListener("click", async () => {
+  const name = document.getElementById("newLotName").value.trim();
+  if (!name) {
+    alert("New lot name is required.");
+    return;
+  }
+  const lot_group_raw = document.getElementById("newLotGroup").value.trim();
+  const lot_group = lot_group_raw || null;
+  const lat = parseFloat(document.getElementById("newLotLat").value);
+  const lon = parseFloat(document.getElementById("newLotLon").value);
+
+  const res = await fetch(`/api/lots`, {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({name, lot_group, lat, lon, polygon_geojson: ""})
+  });
+  const created = await res.json();
+
+  await refreshLists();
+  if (created && created.id) {
+    document.getElementById("lotSelect").value = String(created.id);
+    onLotChange();
+  }
+});
+
+document.getElementById("saveLotCenter").addEventListener("click", async () => {
+  const lot_id = parseInt(document.getElementById("lotSelect").value, 10);
+  const lat = parseFloat(document.getElementById("lotLat").value);
+  const lon = parseFloat(document.getElementById("lotLon").value);
+
+  await fetch(`/api/lots/${lot_id}`, {
+    method: "PUT",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({lat, lon})
+  });
+
+  await refreshLists();
+  document.getElementById("lotSelect").value = String(lot_id);
+  onLotChange();
+});
+
+document.getElementById("saveLotPoly").addEventListener("click", async () => {
+  const lot_id = parseInt(document.getElementById("lotSelect").value, 10);
+
+  // Prefer whatever is currently in drawnItems if user drew/edited
+  let geojson = null;
+  const fc = drawnItems.toGeoJSON();
+  if (fc && fc.features && fc.features.length) {
+    // Store as FeatureCollection to keep it simple
+    geojson = fc;
+  } else {
+    const txt = document.getElementById("lotGeojson").value.trim();
+    if (txt) geojson = JSON.parse(txt);
+  }
+
+  const payload = { polygon_geojson: geojson ? JSON.stringify(geojson) : "" };
+  await fetch(`/api/lots/${lot_id}`, {
+    method: "PUT",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify(payload)
+  });
+
+  await refreshLists();
+  document.getElementById("lotSelect").value = String(lot_id);
+  onLotChange();
+});
+
+document.getElementById("saveCam").addEventListener("click", async () => {
+  const cam_id = parseInt(document.getElementById("camSelect").value, 10);
+  const lat = parseFloat(document.getElementById("camLat").value);
+  const lon = parseFloat(document.getElementById("camLon").value);
+
+  await fetch(`/api/cameras/${cam_id}`, {
+    method: "PUT",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({lat, lon})
+  });
+
+  await refreshLists();
+  document.getElementById("camSelect").value = String(cam_id);
+  onCamChange();
+});
+
+map.on(L.Draw.Event.CREATED, function (e) {
+  drawnItems.addLayer(e.layer);
+  const fc = drawnItems.toGeoJSON();
+  document.getElementById("lotGeojson").value = JSON.stringify(fc);
+});
+map.on(L.Draw.Event.EDITED, function (e) {
+  const fc = drawnItems.toGeoJSON();
+  document.getElementById("lotGeojson").value = JSON.stringify(fc);
+});
+map.on(L.Draw.Event.DELETED, function (e) {
+  const fc = drawnItems.toGeoJSON();
+  document.getElementById("lotGeojson").value = JSON.stringify(fc);
+});
+
+refreshLists();
+</script>
+</body>
+</html>

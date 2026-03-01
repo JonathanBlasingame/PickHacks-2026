@@ -1,0 +1,466 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Admin - Define Spots/Zones</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 16px; }
+    .row { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+    #canvasWrap { border: 1px solid #ccc; padding: 8px; }
+    canvas { display: block; border: 1px solid #666; cursor: crosshair; max-width: 100%; height: auto; }
+    .panel { width: 360px; }
+    label { display:block; margin-top: 10px; font-weight: 600; }
+    input, select, button { width: 100%; padding: 8px; margin-top: 6px; box-sizing: border-box; }
+    button { cursor: pointer; }
+    .hint { color: #555; font-size: 13px; margin-top: 8px; line-height: 1.35; }
+    .list { margin-top: 16px; font-size: 14px; }
+    .regionItem { border: 1px solid #ddd; padding: 8px; margin: 8px 0; border-radius: 8px; }
+    .tiny { font-size: 12px; color:#666; }
+    .btnRow { display:flex; gap: 8px; }
+    .btnRow button { flex: 1; width: auto; }
+  </style>
+</head>
+<body>
+  <h2>Admin: Define Parking Regions (spots + zones)</h2>
+  <div class="hint">Need to place lots/cameras on the map? Use <a href="/static/map_admin.html">Map Setup</a>.</div>
+  <div class="row">
+    <div id="canvasWrap">
+      <canvas id="c"></canvas>
+      <div class="hint">
+        Click to add points, or start with a template shape.<br/>
+        For <b>zones</b>, use exactly <b>4 corners</b>. Drag vertices (or drag inside shape) to position.<br/>
+        Press <b>Enter</b> to save. Press <b>Esc</b> to clear current points.
+      </div>
+      <div class="btnRow" style="margin-top:8px;">
+        <button id="createSpotBtn" type="button">Create Spot Template</button>
+        <button id="createZoneBtn" type="button">Create Zone Template</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <label>Camera</label>
+      <select id="cameraSelect"></select>
+
+      <label>Region name</label>
+      <input id="regionName" placeholder="Optional (reserved spots can have nickname)" />
+      <div class="hint">If blank, spots are auto-named incrementally (e.g., Spot 1, Spot 2; Reserved 1...).</div>
+
+      <label>Kind</label>
+      <select id="kind">
+        <option value="spot">spot (capacity=1)</option>
+        <option value="zone">bulk create spots from zone shape</option>
+      </select>
+
+      <label>Type</label>
+      <select id="spotType">
+        <option value="standard">standard</option>
+        <option value="handicap">handicap</option>
+        <option value="metered">metered</option>
+        <option value="EV">EV</option>
+        <option value="reserved">reserved</option>
+        <option value="standard_zone">standard_zone</option>
+      </select>
+
+      <label>Capacity (zones only)</label>
+      <input id="capacity" type="number" min="1" value="60" />
+
+      <div id="zoneCal" style="display:none;">
+        <label>Grid columns (zones only)</label>
+        <input id="gridCols" type="number" min="1" value="10" />
+        <div class="hint">
+          Columns = spots across for horizontal zones. For vertical zones, treat this like rows (rotation-aware split).<br/>
+          The tool auto-derives the other dimension from capacity.
+        </div>
+
+        <label>Angle override (deg, optional)</label>
+        <input id="angleOverride" type="number" step="0.1" placeholder="leave blank for auto" />
+        <div class="hint">If the virtual spots look rotated wrong, try 0, 90, -15, 15, etc.</div>
+      </div>
+
+      <div class="btnRow">
+        <button id="saveBtn">Save (Enter)</button>
+        <button id="clearBtn">Clear (Esc)</button>
+        <button id="cancelEditBtn" type="button" style="display:none;">Cancel Edit</button>
+      </div>
+
+      <div class="list">
+        <h3>Existing regions</h3>
+        <div id="regions"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+let img = new Image();
+let imgLoaded = false;
+
+let currentPoints = [];
+let dragVertexIndex = -1;
+let dragShape = false;
+let dragLast = null;
+let cameraId = null;
+let existingRegions = [];
+let editingRegionId = null;
+
+const kindStyles = {
+  zone: { stroke: "#2563eb", fill: "rgba(37,99,235,0.22)" },
+  spot: { stroke: "#059669", fill: "rgba(5,150,105,0.26)" }
+};
+
+function drawPolygon(points, { stroke, fill, width = 2, dash = [] }) {
+  if (!points || points.length < 2) return;
+
+  ctx.save();
+  ctx.setLineDash(dash);
+  ctx.beginPath();
+  ctx.moveTo(points[0][0], points[0][1]);
+  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i][0], points[i][1]);
+
+  if (points.length >= 3) {
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = width;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawExistingRegions() {
+  for (const reg of existingRegions) {
+    if (!Array.isArray(reg.points) || reg.points.length < 3) continue;
+    const style = kindStyles[reg.kind] || kindStyles.spot;
+    drawPolygon(reg.points, { stroke: style.stroke, fill: style.fill, width: 2 });
+
+    const [ax, ay] = reg.points[0];
+    ctx.fillStyle = "rgba(17,24,39,0.86)";
+    ctx.font = "12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+    ctx.fillText(reg.name, ax + 6, ay - 6);
+  }
+}
+
+function setCanvasSize(w, h) {
+  canvas.width = w;
+  canvas.height = h;
+}
+
+function updateZoneCalVisibility() {
+  const kind = document.getElementById("kind").value;
+  document.getElementById("zoneCal").style.display = (kind === "zone") ? "block" : "none";
+}
+
+document.getElementById("kind").addEventListener("change", updateZoneCalVisibility);
+
+function setEditingMode(region) {
+  editingRegionId = region ? region.id : null;
+  document.getElementById('saveBtn').textContent = editingRegionId ? 'Update Region (Enter)' : 'Save (Enter)';
+  document.getElementById('cancelEditBtn').style.display = editingRegionId ? 'block' : 'none';
+}
+
+function resetEditor(clearPoints = true) {
+  if (clearPoints) currentPoints = [];
+  document.getElementById('regionName').value = '';
+  document.getElementById('kind').value = 'spot';
+  document.getElementById('spotType').value = 'standard';
+  document.getElementById('capacity').value = '60';
+  document.getElementById('gridCols').value = '10';
+  document.getElementById('angleOverride').value = '';
+  updateZoneCalVisibility();
+  setEditingMode(null);
+  draw();
+}
+
+function draw() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if (imgLoaded) ctx.drawImage(img, 0, 0);
+  drawExistingRegions();
+
+  if (currentPoints.length > 0) {
+    drawPolygon(currentPoints, {
+      stroke: "#dc2626",
+      fill: "rgba(220,38,38,0.28)",
+      width: 3,
+      dash: [8, 4]
+    });
+
+    for (const [x,y] of currentPoints) {
+      ctx.beginPath();
+      ctx.arc(x,y,4,0,Math.PI*2);
+      ctx.fillStyle = "red";
+      ctx.fill();
+    }
+  }
+}
+
+function eventToCanvasPoint(evt) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const x = Math.round((evt.clientX - rect.left) * scaleX);
+  const y = Math.round((evt.clientY - rect.top) * scaleY);
+  return [x, y];
+}
+
+function pointInPolygon(x, y, points) {
+  if (!points || points.length < 3) return false;
+  let inside = false;
+  let j = points.length - 1;
+  for (let i = 0; i < points.length; i++) {
+    const xi = points[i][0], yi = points[i][1];
+    const xj = points[j][0], yj = points[j][1];
+    const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / ((yj - yi) || 1e-9) + xi);
+    if (intersect) inside = !inside;
+    j = i;
+  }
+  return inside;
+}
+
+function nearestVertexIndex(x, y, points, radius = 10) {
+  if (!points || points.length === 0) return -1;
+  const r2 = radius * radius;
+  for (let i = 0; i < points.length; i++) {
+    const dx = points[i][0] - x;
+    const dy = points[i][1] - y;
+    if ((dx * dx + dy * dy) <= r2) return i;
+  }
+  return -1;
+}
+
+canvas.addEventListener("mousedown", (evt) => {
+  const [x, y] = eventToCanvasPoint(evt);
+  const vi = nearestVertexIndex(x, y, currentPoints, 10);
+  if (vi >= 0) {
+    dragVertexIndex = vi;
+    dragLast = [x, y];
+    return;
+  }
+  if (pointInPolygon(x, y, currentPoints)) {
+    dragShape = true;
+    dragLast = [x, y];
+    return;
+  }
+  currentPoints.push([x, y]);
+  draw();
+});
+
+canvas.addEventListener("mousemove", (evt) => {
+  if (dragVertexIndex < 0 && !dragShape) return;
+  const [x, y] = eventToCanvasPoint(evt);
+  if (dragVertexIndex >= 0) {
+    currentPoints[dragVertexIndex] = [x, y];
+  } else if (dragShape && dragLast) {
+    const dx = x - dragLast[0];
+    const dy = y - dragLast[1];
+    currentPoints = currentPoints.map(([px, py]) => [px + dx, py + dy]);
+  }
+  dragLast = [x, y];
+  draw();
+});
+
+window.addEventListener("mouseup", () => {
+  dragVertexIndex = -1;
+  dragShape = false;
+  dragLast = null;
+});
+
+document.addEventListener("keydown", async (e) => {
+  if (e.key === "Escape") {
+    currentPoints = [];
+    draw();
+  }
+  if (e.key === "Enter") {
+    await saveRegion();
+  }
+});
+
+document.getElementById("saveBtn").addEventListener("click", saveRegion);
+document.getElementById("clearBtn").addEventListener("click", () => resetEditor(true));
+document.getElementById("cancelEditBtn").addEventListener("click", () => resetEditor(true));
+
+function clampPoint([x, y]) {
+  return [Math.max(0, Math.min(canvas.width - 1, x)), Math.max(0, Math.min(canvas.height - 1, y))];
+}
+
+function centeredRect(w, h) {
+  const cx = Math.round(canvas.width / 2);
+  const cy = Math.round(canvas.height / 2);
+  const hw = Math.round(w / 2);
+  const hh = Math.round(h / 2);
+  return [
+    clampPoint([cx - hw, cy - hh]),
+    clampPoint([cx + hw, cy - hh]),
+    clampPoint([cx + hw, cy + hh]),
+    clampPoint([cx - hw, cy + hh]),
+  ];
+}
+
+function createTemplate(kind) {
+  if (!imgLoaded) return;
+  const base = Math.max(24, Math.round(Math.min(canvas.width, canvas.height) * (kind === 'zone' ? 0.20 : 0.08)));
+  const width = kind === 'zone' ? Math.round(base * 1.8) : base;
+  const height = base;
+  currentPoints = centeredRect(width, height);
+  document.getElementById('kind').value = kind;
+  updateZoneCalVisibility();
+  draw();
+}
+
+document.getElementById('createSpotBtn').addEventListener('click', () => createTemplate('spot'));
+document.getElementById('createZoneBtn').addEventListener('click', () => createTemplate('zone'));
+
+async function loadCameras() {
+  const res = await fetch("/api/cameras");
+  const cams = await res.json();
+  const sel = document.getElementById("cameraSelect");
+  sel.innerHTML = "";
+  for (const c of cams) {
+    const opt = document.createElement("option");
+    opt.value = c.id;
+    opt.textContent = `${c.name} (lot ${c.lot_id})`;
+    sel.appendChild(opt);
+  }
+  if (cams.length) {
+    sel.value = cams[0].id;
+    cameraId = parseInt(sel.value,10);
+    await loadReferenceFrame(cameraId);
+    await refreshRegions();
+  }
+  sel.addEventListener("change", async () => {
+    cameraId = parseInt(sel.value,10);
+    resetEditor(true);
+    await loadReferenceFrame(cameraId);
+    await refreshRegions();
+  });
+}
+
+async function loadReferenceFrame(camId) {
+  imgLoaded = false;
+  img = new Image();
+  img.onload = () => {
+    imgLoaded = true;
+    setCanvasSize(img.width, img.height);
+    draw();
+  };
+  img.src = `/api/cameras/${camId}/reference_frame?ts=${Date.now()}`;
+}
+
+async function refreshRegions() {
+  const r = await fetch(`/api/regions?camera_id=${cameraId}`);
+  const regions = await r.json();
+  existingRegions = regions;
+  draw();
+  const div = document.getElementById("regions");
+  div.innerHTML = "";
+  for (const reg of regions) {
+    const el = document.createElement("div");
+    el.className = "regionItem";
+    const extra = (reg.kind === "zone")
+      ? ` | grid_cols: ${reg.grid_cols ?? "auto"} | angle_override: ${reg.angle_override_deg ?? "auto"}`
+      : "";
+    el.innerHTML = `
+      <div><b>${reg.name}</b></div>
+      <div class="tiny">kind: ${reg.kind} | type: ${reg.spot_type} | cap: ${reg.capacity} | points: ${reg.points.length}${extra}</div>
+      <div class="btnRow" style="margin-top:8px;">
+        <button data-action="edit" data-id="${reg.id}" type="button">Edit</button>
+        <button data-action="delete" data-id="${reg.id}" type="button">Delete</button>
+      </div>
+    `;
+    el.querySelector('[data-action="edit"]').addEventListener('click', () => {
+      currentPoints = (reg.points || []).map(([x, y]) => [x, y]);
+      document.getElementById('regionName').value = reg.name || '';
+      document.getElementById('kind').value = reg.kind || 'spot';
+      document.getElementById('spotType').value = reg.spot_type || 'standard';
+      document.getElementById('capacity').value = String(reg.capacity || 1);
+      document.getElementById('gridCols').value = reg.grid_cols == null ? '10' : String(reg.grid_cols);
+      document.getElementById('angleOverride').value = reg.angle_override_deg == null ? '' : String(reg.angle_override_deg);
+      updateZoneCalVisibility();
+      setEditingMode(reg);
+      draw();
+    });
+    el.querySelector('[data-action="delete"]').addEventListener('click', async () => {
+      if (!confirm("Delete region?")) return;
+      await fetch(`/api/regions/${reg.id}`, { method: "DELETE" });
+      if (editingRegionId === reg.id) resetEditor(true);
+      await refreshRegions();
+    });
+    div.appendChild(el);
+  }
+}
+
+async function saveRegion() {
+  if (!cameraId) return alert("No camera selected.");
+
+  const enteredName = document.getElementById("regionName").value.trim();
+  const kind = document.getElementById("kind").value;
+  if (kind === "zone" && currentPoints.length !== 4) {
+    return alert("Zones require exactly 4 corner points.");
+  }
+  if (kind !== "zone" && currentPoints.length < 3) {
+    return alert("Spots need at least 3 points.");
+  }
+  const spotType = document.getElementById("spotType").value;
+  const capacity = parseInt(document.getElementById("capacity").value, 10) || 1;
+  const gridCols = parseInt(document.getElementById("gridCols").value, 10);
+  const angleOverrideRaw = document.getElementById("angleOverride").value.trim();
+
+  const payload = {
+    camera_id: cameraId,
+    name: enteredName,
+    kind,
+    spot_type: spotType,
+    capacity: (kind === "zone") ? capacity : 1,
+    grid_cols: (kind === "zone") ? (Number.isFinite(gridCols) ? gridCols : null) : null,
+    angle_override_deg: (kind === "zone" && angleOverrideRaw !== "") ? parseFloat(angleOverrideRaw) : null,
+    points: currentPoints,
+    enabled: true
+  };
+
+  let res;
+  if (!editingRegionId && kind === "zone") {
+    // Zone authoring now bulk-creates real spot regions from a 4-corner area.
+    const bulkPayload = {
+      camera_id: cameraId,
+      spot_type: spotType,
+      capacity,
+      grid_cols: Number.isFinite(gridCols) ? gridCols : null,
+      angle_override_deg: (angleOverrideRaw !== "") ? parseFloat(angleOverrideRaw) : null,
+      points: currentPoints,
+      enabled: true,
+    };
+    res = await fetch("/api/regions/bulk_spots", {
+      method: "POST",
+      headers: { "Content-Type":"application/json" },
+      body: JSON.stringify(bulkPayload)
+    });
+  } else {
+    const targetUrl = editingRegionId ? `/api/regions/${editingRegionId}` : "/api/regions";
+    const targetMethod = editingRegionId ? "PUT" : "POST";
+    res = await fetch(targetUrl, {
+      method: targetMethod,
+      headers: { "Content-Type":"application/json" },
+      body: JSON.stringify(payload)
+    });
+  }
+
+  if (!res.ok) {
+    const txt = await res.text();
+    return alert("Save failed: " + txt);
+  }
+
+  resetEditor(true);
+  await refreshRegions();
+}
+
+(async function() {
+  updateZoneCalVisibility();
+  await loadCameras();
+  resetEditor(true);
+})();
+</script>
+</body>
+</html>
